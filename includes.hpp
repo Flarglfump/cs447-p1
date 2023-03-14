@@ -1,7 +1,7 @@
 /*
  * Gavin Witsken
  * CS 447
- * Project 1, includes.h
+ * Project 1, includes.hpp
  * 03/13/2023
 */
 
@@ -42,7 +42,8 @@
 
 //Exit codes
 #define EXIT_INVALIDFILEREAD 1
-
+#define EXIT_SOCKET 2
+#define EXIT_ARGCOUNT 3
 
 //Error/Reply codes
 #define ERR_UNKNOWNCOMMAND 421
@@ -111,57 +112,61 @@ typedef struct {
 //Functions
 
 int configure_client(std::string filename, std::string& SERVER_IP, std::string& SERVER_PORT) { 
-    std::vector<std::string> lines;
+    std::string line;
+    std::string var_name = "";
+    std::string var_val = "";
 
     std::ifstream in(filename);
     if (!in.is_open())
         return EXIT_INVALIDFILEREAD;
 
     while (in >> line) {
-        std::string var_name;
-        std::string var_val;
-        std::stringstream stream;
-        stream << line;
+        var_name = "";
+        var_val = "";
 
-        getline(stream, var_name, '=');
-        if (stream.fail()) 
-            return EXIT_INVALIDFILEREAD;
+        var_name = line.substr(0, (line.find("=") + 1));
+        var_val = line.substr( (line.find("=") + 1), (line.size() - (line.find("=") + 1)));
 
-        getline(stream, var_val);
-        if (stream.fail()) 
+        if (var_name == "" || var_val == "") {
+            in.close();
             return EXIT_INVALIDFILEREAD;
+        }
 
         if (var_name == "SERVER_IP")
             SERVER_IP = var_val;
         else if (var_name == "SERVER_PORT")
             SERVER_PORT = var_val;
-        else
+        else {
+            in.close();
             return EXIT_INVALIDFILEREAD;  
+        }
     }
 
+    in.close();
     return 0;
 }
 
-int configure_server(std::string filename, std::string NICK, std::string PASS, std::string PORT, std::string SERVERS, std::string SOCK_ADDR) { //Returns 0 on success, else failure
-    std::vector<std::string> lines;
+int configure_server(std::string filename, std::string& NICK, std::string& PASS, std::string& PORT, std::string& SERVERS, std::string& SOCK_ADDR) { //Returns 0 on success, else failure
+    std::string line;
+    std::string var_name = "";
+    std::string var_val = "";
 
     std::ifstream in(filename); 
     if (!in.is_open())
         return EXIT_INVALIDFILEREAD;
 
     while (in >> line) {
-        std::string var_name;
-        std::string var_val;
-        std::stringstream stream;
-        stream << line;
+        var_name = "";
+        var_val = "";
+        
+        var_name = line.substr(0, (line.find("=")));
+        var_val = line.substr( (line.find("=") + 1), (line.size() - (line.find("=") + 1)));
+        // std::cout << "var_name: " << var_name << "\nvar_val: " << var_val << std::endl;
 
-        getline(stream, var_name, '=');
-        if (stream.fail()) 
+        if (var_name == "" || var_val == "") {
+            in.close();
             return EXIT_INVALIDFILEREAD;
-
-        getline(stream, var_val);
-        if (stream.fail()) 
-            return EXIT_INVALIDFILEREAD;
+        }
 
         if (var_name == "NICK")
             NICK = var_val;
@@ -173,10 +178,13 @@ int configure_server(std::string filename, std::string NICK, std::string PASS, s
             SERVERS = var_val;
         else if (var_name == "SOCK_ADDR")
             SOCK_ADDR = var_val;
-        else
+        else {
+            in.close();
             return EXIT_INVALIDFILEREAD;  
+        }
     }
 
+    in.close();
     return 0;
 }
 
@@ -201,4 +209,15 @@ int get_command_key(std::string command) { //Returns -1 on failure, else returns
         return CMD_TIME;
     else
         return CMD_INVALID;
+}
+
+int make_stream_socket() { //Returns file descriptor to created stream socket; returns -1 on failure
+    return socket(PF_INET, SOCK_STREAM, 0); //IPv4, Stream, TCP
+}
+
+void server_addr_init(int port, struct sockaddr_in* server_address) {
+    server_address->sin_family = AF_INET;
+    server_address->sin_port = htons(port);     // short, network byte order
+    server_address->sin_addr.s_addr = INADDR_ANY;
+    memset(server_address->sin_zero, '\0', sizeof(server_address->sin_zero));
 }
