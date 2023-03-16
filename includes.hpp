@@ -31,19 +31,22 @@
 #define CMD_NICK 0
 #define CMD_USER 1
 #define CMD_QUIT 2
-
 #define CMD_JOIN 3
 #define CMD_PART 4
 #define CMD_TOPIC 5
 #define CMD_NAMES 6
-
 #define CMD_PRIVMSG 7
 #define CMD_TIME 8
+
+#define MSGBUFSIZE 1024
 
 //Exit codes
 #define EXIT_INVALIDFILEREAD 1
 #define EXIT_SOCKET 2
 #define EXIT_ARGCOUNT 3
+#define EXIT_BIND 4
+#define EXIT_LISTEN 5
+#define EXIT_CONNECT 6
 
 //Error/Reply codes
 #define ERR_UNKNOWNCOMMAND 421
@@ -109,6 +112,11 @@ typedef struct {
     char name[51];
 } Channel;
 
+typedef struct {
+    struct sockaddr_in addr;
+    int sockfd;
+} Client_Info;
+
 //Functions
 
 int configure_client(std::string filename, std::string& SERVER_IP, std::string& SERVER_PORT) { 
@@ -124,19 +132,16 @@ int configure_client(std::string filename, std::string& SERVER_IP, std::string& 
         var_name = "";
         var_val = "";
 
-        var_name = line.substr(0, (line.find("=") + 1));
-        var_val = line.substr( (line.find("=") + 1), (line.size() - (line.find("=") + 1)));
-
-        if (var_name == "" || var_val == "") {
-            in.close();
-            return EXIT_INVALIDFILEREAD;
-        }
+        var_name = line.substr(0, (line.find("=")));
+        var_val = line.substr( (line.find("=") + 1), std::string::npos);
+        std::cout << var_name << std::endl << var_val << std::endl;
 
         if (var_name == "SERVER_IP")
             SERVER_IP = var_val;
         else if (var_name == "SERVER_PORT")
             SERVER_PORT = var_val;
         else {
+            std::cerr << "Error: Unknown var_name \"" << var_name << "\"" << std::endl;
             in.close();
             return EXIT_INVALIDFILEREAD;  
         }
@@ -160,13 +165,8 @@ int configure_server(std::string filename, std::string& NICK, std::string& PASS,
         var_val = "";
         
         var_name = line.substr(0, (line.find("=")));
-        var_val = line.substr( (line.find("=") + 1), (line.size() - (line.find("=") + 1)));
+        var_val = line.substr( (line.find("=") + 1), std::string::npos);
         // std::cout << "var_name: " << var_name << "\nvar_val: " << var_val << std::endl;
-
-        if (var_name == "" || var_val == "") {
-            in.close();
-            return EXIT_INVALIDFILEREAD;
-        }
 
         if (var_name == "NICK")
             NICK = var_val;
