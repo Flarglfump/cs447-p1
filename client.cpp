@@ -6,9 +6,14 @@
 */
 #include "includes.hpp"
 
+void* receiver_func(void* socket);
+void* sender_func(void* socket);
+
 //From config file
 std::string SERVER_IP;
 std::string SERVER_PORT;
+
+pthread_t receiver_thread, sender_thread;
 
 int main(int argc, char* argv[]) {
     //Validate usage
@@ -48,17 +53,48 @@ int main(int argc, char* argv[]) {
         exit(EXIT_CONNECT);
     }
 
-    char rcv_msg_buff[MSGBUFSIZE] = {0};
-    if (recv(client_sockfd, rcv_msg_buff, sizeof(rcv_msg_buff), 0) == -1) {
-        std::cerr << "Error: unable to receive message from server" << std::endl;
-    } else {
-        printf("Message from server: \"%s\"\n", rcv_msg_buff);
-    }
+    pthread_create(&sender_thread, NULL, sender_func, (void*) &client_sockfd);
+    pthread_create(&receiver_thread, NULL, receiver_func, (void*) &client_sockfd);
 
-    std::string msg = "Cool beans bro";
-    if (send(client_sockfd, msg.c_str(), msg.size()+1, 0) == -1) {
-        std::cerr << "Unable to send message to \"" << SERVER_IP << "\"" << std::endl;
-    }
-
+    pthread_join(receiver_thread, NULL);
+    pthread_join(sender_thread, NULL);
     return 0;
+}
+
+void* receiver_func(void* socket) {
+    int sockfd = * (int*) socket;
+
+    while (1) {
+        char rcv_msg_buff[MSGBUFSIZE] = {0};
+
+        if (recv(sockfd, rcv_msg_buff, sizeof(rcv_msg_buff), 0) <= 0) {
+            std::cerr << "Error: unable to receive message from server" << std::endl;
+        } else {
+            if (strlen(rcv_msg_buff) <= 0) {
+                printf("Received empty message from server. Exiting...\n");
+                break;
+            } else {
+                printf("Message from server: \"%s\"\n", rcv_msg_buff);
+            }
+        }
+    }
+
+
+    pthread_cancel(sender_thread);
+    return NULL;
+}
+void* sender_func(void* socket) {
+    int sockfd = * (int*) socket;
+
+    while (1) {
+        std::string msg;
+
+        std::getline(std::cin, msg);
+
+        if (send(sockfd, msg.c_str(), msg.size()+1, 0) <= 0) {
+            std::cerr << "Unable to send message to \"" << SERVER_IP << "\"" << std::endl;
+        }
+    }
+
+    return NULL;
 }

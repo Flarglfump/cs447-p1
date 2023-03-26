@@ -24,6 +24,7 @@
 #include <fstream>
 #include <sstream>
 #include <cstring>
+#include <regex>
 
 //Macros/Constants
 #define CMD_INVALID -1
@@ -49,68 +50,92 @@
 #define EXIT_CONNECT 6
 
 //Error/Reply codes
-#define ERR_UNKNOWNCOMMAND 421
+#define ERR_UNKNOWNCOMMAND "421"
+#define RPL_WELCOME "001"
 
-#define ERR_NONICKNAMEGIVEN 431
-#define ERR_ERRONEUSNICKNAME 432
-#define ERR_NICKNAMEINUSE 433
-#define ERR_NICKCOLLISION 436
-#define ERR_UNAVAILRESOURCE 437
-#define ERR_RESTRICTED 484
+#define ERR_NONICKNAMEGIVEN "431"
+#define ERR_ERRONEUSNICKNAME "432"
+#define ERR_NICKNAMEINUSE "433" 
+#define ERR_NICKCOLLISION "436" //Only one server here, not used
+#define ERR_UNAVAILRESOURCE "437" //No nick delay mechanism, not used
+#define ERR_RESTRICTED "484" //Not implementing user modes, not used
 
-#define ERR_NEEDMOREPARAMS 461
-#define ERR_ALREADYREGISTRED 462
+#define ERR_NEEDMOREPARAMS "461"
+#define ERR_ALREADYREGISTRED "462"
 
-// #define ERR_NEEDMOREPARAMS 461
-#define ERR_BANNEDFROMCHAN 474
-#define ERR_INVITEONLYCHAN 473
-#define ERR_BADCHANNELKEY 475
-#define ERR_CHANNELISFULL 471
-#define ERR_BADCHANMASK 476
-#define ERR_NOSUCHCHANNEL 403
-#define ERR_TOOMANYCHANNELS 405
-#define ERR_TOOMANYTARGETS 407
-#define ERR_UNAVAILRESOURCE 437
-#define RPL_TOPIC 332
+// #define ERR_NEEDMOREPARAMS "461"
+#define ERR_BANNEDFROMCHAN "474"
+#define ERR_INVITEONLYCHAN "473"
+#define ERR_BADCHANNELKEY "475"
+#define ERR_CHANNELISFULL "471"
+#define ERR_BADCHANMASK "476"
+#define ERR_NOSUCHCHANNEL "403"
+#define ERR_TOOMANYCHANNELS "405"
+#define ERR_TOOMANYTARGETS "407"
+#define ERR_UNAVAILRESOURCE "437"
+#define RPL_TOPIC "332"
 
 // #define ERR_NEEDMOREPARAMS 461
 // #define ERR_NOSUCHCHANNEL 403
-#define ERR_NOTONCHANNEL 442
+#define ERR_NOTONCHANNEL "442"
 
 // #define ERR_NEEDMOREPARAMS 461
 // #define ERR_NOTONCHANNEL 442
-#define RPL_NOTOPIC 331
+#define RPL_NOTOPIC "331"
 // #define RPL_TOPIC 332
-#define ERR_CHANOPRIVSNEEDED 482
-#define ERR_NOCHANMODES 477
+#define ERR_CHANOPRIVSNEEDED "482"
+#define ERR_NOCHANMODES "477"
 
-#define ERR_TOOMANYMATCHES 416
-#define ERR_NOSUCHSERVER 402
-#define RPL_NAMREPLY 353
-#define RPL_ENDOFNAMES 366
+#define ERR_TOOMANYMATCHES "416"
+#define ERR_NOSUCHSERVER "402"
+#define RPL_NAMREPLY "353"
+#define RPL_ENDOFNAMES "366"
 
-#define ERR_NORECIPIENT 411
-#define ERR_NOTEXTTOSEND 412
-#define ERR_CANNOTSENDTOCHAN 404
-#define ERR_NOTOPLEVEL 413
-#define ERR_WILDTOPLEVEL 414
+#define ERR_NORECIPIENT "411"
+#define ERR_NOTEXTTOSEND "412"
+#define ERR_CANNOTSENDTOCHAN "404"
+#define ERR_NOTOPLEVEL "413"
+#define ERR_WILDTOPLEVEL "414"
 // #define ERR_TOOMANYTARGETS 407
-#define ERR_NOSUCHNICK 401
-#define RPL_AWAY 301
+#define ERR_NOSUCHNICK "401"
+#define RPL_AWAY "301"
 
-#define ERR_NOSUCHSERVER 402
-#define RPL_TIME 391
+#define ERR_NOSUCHSERVER "402"
+#define RPL_TIME "391"
 
 
 //Structs/Classes
-typedef struct {
-    char name[10];
-    char perms; //Bitwise combination of permission stuff - specified in RFC 2812
-} User;
+class User{
+    public:
+    std::string nickname;
+    std::string username;
+    std::string realname;
+    // char perms; not implementing permissions here, but normally would be
+    std::string ip_addr_str;
+    bool registered;
+    std::vector<std::string> channels;
 
-typedef struct {
-    char name[51];
-} Channel;
+    User() {
+        nickname = "";
+        username = "";
+        realname = "";
+        ip_addr_str = "";
+        registered = false;
+    }
+    User(std::string ip_addr_str) {
+        nickname = "";
+        username = "";
+        realname = "";
+        this->ip_addr_str = ip_addr_str;
+        registered = false;
+    }
+};
+
+class Channel {
+    public:
+    std::string name;
+    std::vector<User> user_list;
+};
 
 typedef struct {
     struct sockaddr_in addr;
@@ -118,6 +143,69 @@ typedef struct {
 } Client_Info;
 
 //Functions
+
+class Channel_List {
+    public:
+    std::vector<Channel> channels;
+    void add_channel(std::string channel);
+};
+
+class User_List {
+    public:
+    std::vector<User> users;
+    void add_user(std::string ip_addr_str) {
+        User usr;
+        usr.nickname = "";
+        usr.username = "";
+        usr.ip_addr_str = ip_addr_str;
+
+        users.push_back(usr);
+    }
+    int update_nick(std::string ip_addr_str, std::string new_nick) {
+        for (std::vector<User>::iterator iter = users.begin(); iter < users.end(); iter++) {
+            if (iter->ip_addr_str == ip_addr_str) {
+                iter->nickname = new_nick;
+                return 0;
+            }
+        }
+        return 1;
+    }
+    int update_user(std::string ip_addr_str, std::string new_user);
+    int remove_entry(std::string ip_addr_str);
+    int update_real(std::string ip_addr_str, std::string new_real);
+    bool nick_exists(std::string nick) {
+        for (std::vector<User>::iterator iter = users.begin(); iter < users.end(); iter++) {
+            if (iter->nickname == nick) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    int get_user_idx_via_nick(std::string nickname) {
+        int i = 0;
+        for (std::vector<User>::iterator iter = users.begin(); iter < users.end(); iter++) {
+            if (iter->nickname == nickname) {
+                std::cerr << "cur_nick: \"" << iter->nickname << "\"" << std::endl; 
+                return i;
+            }
+            ++i;
+        }
+
+        return -1;
+    }
+    int get_user_idx_via_ip(std::string ip_addr_str) {
+        int i = 0;
+        for (std::vector<User>::iterator iter = users.begin(); iter < users.end(); iter++) {
+            if (iter->ip_addr_str == ip_addr_str) {
+                return i;
+            }
+            ++i;
+        }
+
+        return -1;
+    }
+};
 
 int configure_client(std::string filename, std::string& SERVER_IP, std::string& SERVER_PORT) { 
     std::string line;
@@ -220,4 +308,32 @@ void server_addr_init(int port, struct sockaddr_in* server_address) {
     server_address->sin_port = htons(port);     // short, network byte order
     server_address->sin_addr.s_addr = INADDR_ANY;
     memset(server_address->sin_zero, '\0', sizeof(server_address->sin_zero));
+}
+
+std::vector<std::string> tokenize(std::string input) {
+    std::stringstream stream(input);
+    std::string word;
+    std::vector<std::string> words;
+    while (getline(stream, word, ' ')) {
+        words.push_back(word);
+    }
+
+    return words;
+}
+
+bool is_valid_nickname(std::string nickname) {
+    if (nickname.size() > 9 || nickname.size() <= 0) {
+        return false;
+    }
+
+    for (int i = 0; i < nickname.size(); i++) {
+        char c = nickname[i];
+
+        if (!isalpha(c) && !isdigit(c) && c != '\\' && c != '-' && c != '_' && c != '`' && c != '{' && c != '}' && c != '[' && c != ']' && c != '|') {
+            //character is invalid
+            return false;
+        }
+    }
+
+    return true;
 }
