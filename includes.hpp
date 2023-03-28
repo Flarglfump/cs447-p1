@@ -25,6 +25,8 @@
 #include <sstream>
 #include <cstring>
 #include <regex>
+#include <chrono>
+#include <ctime>
 
 //Macros/Constants
 #define CMD_INVALID -1
@@ -62,6 +64,8 @@
 
 #define ERR_NEEDMOREPARAMS "461"
 #define ERR_ALREADYREGISTRED "462"
+#define ERR_ERRONEUSUSERNAME "5555" //New code implemented by me
+#define ERR_ERRONEOUSREALNAME "5556" //New code implemented by me
 
 // #define ERR_NEEDMOREPARAMS "461"
 #define ERR_BANNEDFROMCHAN "474"
@@ -114,6 +118,7 @@ class User{
     std::string ip_addr_str;
     bool registered;
     std::vector<std::string> channels;
+    int sockfd;
 
     User() {
         nickname = "";
@@ -121,20 +126,46 @@ class User{
         realname = "";
         ip_addr_str = "";
         registered = false;
+        sockfd = -1;
     }
-    User(std::string ip_addr_str) {
+    User(std::string ip_addr_str, int sockfd) {
         nickname = "";
         username = "";
         realname = "";
         this->ip_addr_str = ip_addr_str;
         registered = false;
+        this->sockfd = sockfd;
     }
 };
 
 class Channel {
     public:
     std::string name;
-    std::vector<User> user_list;
+    std::vector<std::string> user_nicks;
+    bool is_in_channel(std::string nick) {
+        for (int i = 0; i < user_nicks.size(); ++i) {
+            if (user_nicks[i] == nick) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    void add_user(std::string nick) {
+        user_nicks.push_back(nick);
+    }
+    void remove_user(std::string nick) {
+        int user_idx = -1;
+        for (int i = 0; i < user_nicks.size(); ++i) {
+            if (user_nicks[i] == nick) {
+                user_idx = i;
+                break;
+            }
+        }
+        if (user_idx != -1) {
+            user_nicks.erase(user_nicks.begin() + user_idx);
+        }
+    }
 };
 
 typedef struct {
@@ -147,17 +178,55 @@ typedef struct {
 class Channel_List {
     public:
     std::vector<Channel> channels;
-    void add_channel(std::string channel);
+
+    void add_channel(std::string channel_name) {
+        Channel channel;
+        channel.name = channel_name;
+        channels.push_back(channel);
+    }
+    bool channel_exists(std::string channel_name) {
+        for (int i = 0; i < channels.size(); ++i) {
+            if (channels[i].name == channel_name) {
+                return true;
+            }
+        }
+        return false;
+    }
+    bool is_user_in_channel(std::string user_nick, std::string channel_name) {
+        
+        for (int i = 0; i < channels.size(); ++i) {
+            if (channels[i].name == channel_name) {
+                return channels[i].is_in_channel(user_nick);
+            }
+        }
+        return false;
+    }
+
+    void add_user_to_channel(std::string user_nick, std::string channel_name) {
+        for (int i = 0; i < channels.size(); ++i) {
+            if (channels[i].name == channel_name) {
+                channels[i].add_user(user_nick);
+            }
+        }
+    }
+
+    void remove_user(std::string user_nick) {
+        for (int i = 0; i < channels.size(); ++i) {
+            channels[i].remove_user(user_nick);
+        }
+    }
+    
 };
 
 class User_List {
     public:
     std::vector<User> users;
-    void add_user(std::string ip_addr_str) {
+    void add_user(std::string ip_addr_str, int sockfd) {
         User usr;
         usr.nickname = "";
         usr.username = "";
         usr.ip_addr_str = ip_addr_str;
+        usr.sockfd = sockfd;
 
         users.push_back(usr);
     }
@@ -170,9 +239,26 @@ class User_List {
         }
         return 1;
     }
-    int update_user(std::string ip_addr_str, std::string new_user);
+    int update_user(std::string ip_addr_str, std::string new_user) {
+        for (std::vector<User>::iterator iter = users.begin(); iter < users.end(); iter++) {
+            if (iter->ip_addr_str == ip_addr_str) {
+                iter->username = new_user;
+                return 0;
+            }
+        }
+        return 1;
+    }
     int remove_entry(std::string ip_addr_str);
-    int update_real(std::string ip_addr_str, std::string new_real);
+    int update_real(std::string ip_addr_str, std::string new_real) {
+        for (std::vector<User>::iterator iter = users.begin(); iter < users.end(); iter++) {
+            if (iter->ip_addr_str == ip_addr_str) {
+                iter->realname = new_real;
+                return 0;
+            }
+        }
+        return 1;
+    }
+
     bool nick_exists(std::string nick) {
         for (std::vector<User>::iterator iter = users.begin(); iter < users.end(); iter++) {
             if (iter->nickname == nick) {
@@ -204,6 +290,25 @@ class User_List {
         }
 
         return -1;
+    }
+    void broadcast(std::string msg) {
+        for (std::vector<User>::iterator iter = users.begin(); iter < users.end(); iter++) {
+            int sockfd = iter->sockfd;
+            if (iter->registered) {
+                if (send(sockfd, msg.c_str(), msg.size()+1, 0) <= 0) {
+                    std::cerr << "Unable to send message to " << iter->nickname << std::endl;
+                }
+            }
+        }
+    }
+    void remove_user(std::string ip_addr_str) {
+        int i = 0;
+        for (std::vector<User>::iterator iter = users.begin(); iter < users.end(); iter++) {
+            if (iter->ip_addr_str == ip_addr_str) {
+                users.erase(users.begin() + i);
+            }
+            ++i;
+        }
     }
 };
 
@@ -336,4 +441,50 @@ bool is_valid_nickname(std::string nickname) {
     }
 
     return true;
+}
+
+bool is_valid_username(std::string username) {
+    if (username.size() > 9 || username.size() <= 0) {
+        return false;
+    }
+
+    for (int i = 0; i < username.size(); i++) {
+        char c = username[i];
+
+        if (!isalpha(c) && !isdigit(c) && c != '\\' && c != '-' && c != '_' && c != '`' && c != '{' && c != '}' && c != '[' && c != ']' && c != '|') {
+            //character is invalid
+            return false;
+        }
+    }
+
+    return true;
+}
+
+bool is_valid_realname(std::string realname) {
+    if (realname.size() > 30 || realname.size() <= 0) {
+        return false;
+    }
+
+    for (int i = 0; i < realname.size(); i++) {
+        char c = realname[i];
+
+        // std::cerr << "Trying to validate realname: " << realname << std::endl;
+
+        if (!isalpha(c) && !isdigit(c) && c != '\\' && c != '-' && c != '_' && c != '`' && c != '{' && c != '}' && c != '[' && c != ']' && c != '|' && c != ' ') {
+            //character is invalid
+            std::cerr << "\nInvalidating character: \"" << c << "\"" << std::endl;
+            return false;
+        }
+    }
+
+    return true;
+}
+
+std::string get_time() {
+    std::chrono::system_clock::time_point time = std::chrono::system_clock::now();
+    std::time_t cur_time = std::chrono::system_clock::to_time_t(time);
+
+    std::stringstream stream;
+    stream << std::ctime(&cur_time);
+    return stream.str();
 }

@@ -7,6 +7,8 @@
 #include "includes.hpp"
 
 User_List users;
+Channel_List channels;
+std::vector<std::string> server_list;
 
 //Globals - accessible in any thread
 #define BACKLOG 10
@@ -19,6 +21,7 @@ std::string SERVERS;
 std::string SOCK_ADDR;
 
 void* handle_connection(void* new_client_info);
+void wipe_user(std::string ip_addr_str);
 
 int main(int argc, char* argv[]) {
     //Validate usage
@@ -108,7 +111,7 @@ void* handle_connection(void* new_client_info) {
     }
 
     //Add client to User list
-    users.add_user(client_ip_addr);
+    users.add_user(client_ip_addr, sockfd);
 
     
     //Wait for client messages and handle on loop
@@ -133,8 +136,14 @@ void* handle_connection(void* new_client_info) {
 
         //Tokenize message via spaces
         std::vector<std::string> args = tokenize(received_msg);
+        
+        // std::cerr << "Args:\n";
+        // for (int i = 0; i < args.size(); ++i) {
+        //     std::cerr << i << ": " << args[i] << std::endl;
+        // }
 
         std::string cmd = args[0];
+        std::string realname = "";
 
         int cmd_key = get_command_key(cmd);
 
@@ -156,7 +165,7 @@ void* handle_connection(void* new_client_info) {
                 reply_details += ":Erroneous nickname";
             } else {
                 std::string nickname = args[1];
-                std::cerr << "Nickname: " << nickname << std::endl;
+                // std::cerr << "Nickname: " << nickname << std::endl;
 
                 //check if valid format
                 if (!is_valid_nickname(nickname)) {
@@ -170,9 +179,19 @@ void* handle_connection(void* new_client_info) {
                 } 
                 //nickname can be set
                 else {
-                    users.update_nick(client_ip_addr, nickname); 
 
-                    int user_idx = users.get_user_idx_via_nick(nickname);
+                    std::cerr << "Nickname can be set." << std::endl;
+
+                    int user_idx = users.get_user_idx_via_ip(client_ip_addr);
+                    std::string old_nick = users.users[user_idx].nickname;
+
+                    if (users.update_nick(client_ip_addr, nickname) != 0) {
+                        //Could not update nick - terminate connection
+                        do_quit = true;
+                        break;
+                    } 
+
+                    
                     std::cerr << "User idx: " << user_idx << std::endl;
                     User user_info = users.users[user_idx];
                     if (user_info.username == "") {
@@ -180,19 +199,107 @@ void* handle_connection(void* new_client_info) {
                         // reply_code = RPL_WELCOME;
                         // reply_details = nickname + ": Welcome to the Internet Relay Network " + nickname + "!" + user_info.username + "@" + client_hostname;
                     } else {
-                        reply_code = RPL_WELCOME;
-                        reply_details = nickname + ": Welcome to the Internet Relay Network " + nickname + "!" + user_info.username + "@" + client_hostname;
+                        if (users.users[user_idx].registered == false) {
+                            users.users[user_idx].registered = true;
+                            reply_code = RPL_WELCOME;
+                            reply_details = nickname + " :Welcome to the Internet Relay Network " + nickname + "!" + user_info.username + "@" + client_hostname;
+                        } else {
+                            do_message = false;
+                            std::string msg = old_nick + "!" + user_info.username + "@" + client_hostname + " " + cmd + nickname;
+                        }
                     }
                 }
             }
             break;
 
             case CMD_USER:
+            if (args.size() < 5) {
+                reply_code = ERR_NEEDMOREPARAMS;
+                reply_details = cmd + " :Not enough parameters";
+            } else {
+                //Check if user is already registered
+                int user_idx = users.get_user_idx_via_ip(client_ip_addr);
+                if (user_idx == -1) { 
+                    //User does not exist - shouldn't happen
+                    do_quit = true;
+                    break;
+                } else {
+                    User user_data = users.users[user_idx];
+                    if (user_data.username != "") {
+                        //User is already registered
+                        reply_code = ERR_ALREADYREGISTRED;
+                        reply_details = ":Unauthorized command (already registered)";
+                    } else {
+                        //User can be registered
+                        //Validate username and real name
+                        realname = "";
+                        for (int i = 4; i < args.size(); ++i) {   
+                            if (i != 4) {
+                                realname += " ";
+                            }
 
+                            if (args[4][0] == ':') {
+                                realname += args[i].substr(1, args[i].size()-1);
+                            } else {
+                                realname += args[i];
+                            }
+                        }
+
+                        if (!is_valid_username(args[1])) {
+                            reply_code = ERR_ERRONEUSUSERNAME;
+                            reply_details = args[1] + " :Erroneous username";
+                        } else if (!is_valid_realname(realname)) {
+                            reply_code = ERR_ERRONEOUSREALNAME;
+                            reply_details = realname + " :Erroneous realname";
+                        } else {
+                            //Username and realname are valid - need to update entry
+                            if (users.update_user(client_ip_addr, args[1]) != 0 || users.update_real(client_ip_addr, realname) != 0) {
+                                //Could not update username or realname - terminate connection
+                                do_quit = true;
+                                break;
+                            }
+                            else {
+                                //Info was updated - make sure Nick is there to send message
+                                if (user_data.nickname == "") {
+                                    do_message = false;
+                                } else {
+                                    users.users[user_idx].registered = true;
+                                    reply_code = RPL_WELCOME;
+                                    reply_details = user_data.nickname + " :Welcome to the Internet Relay Network " + user_data.nickname + "!" + args[1] + "@" + client_hostname;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             break;
 
             case CMD_QUIT:
+            if (args.size() == 1) {
+                //No message - just quit
+                do_quit = true;
+                int user_idx = users.get_user_idx_via_ip(client_ip_addr);
+                User usr = users.users[user_idx];
+                std::string msg = ":" + usr.nickname + "!" + usr.username + "@" + client_hostname + " " + cmd;
+                users.broadcast(msg);
+            } else {
+                //There is a message
+                do_quit = true;
+                int user_idx = users.get_user_idx_via_ip(client_ip_addr);
+                User usr = users.users[user_idx];
+                std::string msg = ":" + usr.nickname + "!" + usr.username + "@" + client_hostname + " " + cmd + " ";
 
+                if (args[1][0] != ':') {
+                    msg += ':';
+                }  
+                for (int i = 1; i < args.size(); ++i) {
+                    if (i != 1) {
+                        msg += " ";
+                    }
+                    msg += args[i];
+                }
+                users.broadcast(msg);
+            }
             break;
 
             case CMD_JOIN:
@@ -208,10 +315,29 @@ void* handle_connection(void* new_client_info) {
             break;
 
             case CMD_TIME:
-
+            if (args.size() == 1) {
+                reply_code = RPL_TIME;
+                reply_details = "TIME :"+ get_time();
+            } else if (args.size() == 2) {
+                std::string target_server = args[1];
+                bool server_exists = false;
+                for (int i = 0; i < server_list.size(); ++i) {
+                    if (server_list[i] == target_server) {
+                        server_exists = true;
+                    }
+                }
+                if (server_exists) {
+                    reply_code = RPL_TIME;
+                    reply_details = target_server + " TIME :" + get_time();
+                } else {
+                    reply_code = ERR_NOSUCHSERVER; 
+                    reply_details = target_server + " :No such server";
+                }
+            }
             break;
 
             case CMD_NAMES:
+            // if (args.size() < 0) 
 
             break;
 
@@ -246,16 +372,24 @@ void* handle_connection(void* new_client_info) {
             } else {
                 std::cout << "Sent message to client (" << client_ip_addr << "): \"" << reply_message_str << "\"" << std::endl;
             }
+
+            reply_message.str("");
         }
     }
 
-    //Critical Section start
-    int user_idx = users.get_user_idx_via_ip(client_ip_addr);
-    if (user_idx != -1) {
-        users.users.erase(users.users.begin() + user_idx);
-    }
-    //Critical Section end
+
+    wipe_user(client_ip_addr);
+    
 
     close(sockfd);
     return NULL;
+}
+
+void wipe_user(std::string ip_addr_str) {
+    int user_idx = users.get_user_idx_via_ip(ip_addr_str);
+    if (user_idx != -1) {
+        User usr = users.users[user_idx];
+        users.remove_user(usr.ip_addr_str);
+        channels.remove_user(usr.nickname);
+    }
 }

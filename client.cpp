@@ -68,14 +68,10 @@ void* receiver_func(void* socket) {
         char rcv_msg_buff[MSGBUFSIZE] = {0};
 
         if (recv(sockfd, rcv_msg_buff, sizeof(rcv_msg_buff), 0) <= 0) {
-            std::cerr << "Error: unable to receive message from server" << std::endl;
-        } else {
-            if (strlen(rcv_msg_buff) <= 0) {
-                printf("Received empty message from server. Exiting...\n");
-                break;
-            } else {
-                printf("Message from server: \"%s\"\n", rcv_msg_buff);
-            }
+            std::cerr << "Unable to receive message from server or connection closed" << std::endl;
+            break;
+        } else { 
+            printf("Message from server: %s\n", rcv_msg_buff);
         }
     }
 
@@ -92,7 +88,7 @@ void* sender_func(void* socket) {
         std::getline(std::cin, msg);
 
         if (send(sockfd, msg.c_str(), msg.size()+1, 0) <= 0) {
-            std::cerr << "Unable to send message to \"" << SERVER_IP << "\"" << std::endl;
+            std::cerr << "Unable to send message to \"" << SERVER_IP << "\" or connection closed" << std::endl;
         }
     }
 
