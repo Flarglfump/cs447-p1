@@ -30,6 +30,8 @@
 
 //Macros/Constants
 #define CMD_INVALID -1
+#define TARGET_CHANNEL 0
+#define TARGET_USER 1
 
 #define CMD_NICK 0
 #define CMD_USER 1
@@ -54,6 +56,7 @@
 //Error/Reply codes
 #define ERR_UNKNOWNCOMMAND "421"
 #define RPL_WELCOME "001"
+#define ERR_NOTREGISTERED "451"
 
 #define ERR_NONICKNAMEGIVEN "431"
 #define ERR_ERRONEUSNICKNAME "432"
@@ -78,6 +81,7 @@
 #define ERR_TOOMANYTARGETS "407"
 #define ERR_UNAVAILRESOURCE "437"
 #define RPL_TOPIC "332"
+#define ERR_USERONCHANNEL "443"
 
 // #define ERR_NEEDMOREPARAMS 461
 // #define ERR_NOSUCHCHANNEL 403
@@ -114,6 +118,7 @@ class User{
     std::string nickname;
     std::string username;
     std::string realname;
+    std::string hostname;
     // char perms; not implementing permissions here, but normally would be
     std::string ip_addr_str;
     bool registered;
@@ -125,22 +130,134 @@ class User{
         username = "";
         realname = "";
         ip_addr_str = "";
+        hostname = "";
         registered = false;
         sockfd = -1;
     }
-    User(std::string ip_addr_str, int sockfd) {
+    User(std::string ip_addr_str, int sockfd, std::string hostname) {
         nickname = "";
         username = "";
         realname = "";
+        hostname = "";
         this->ip_addr_str = ip_addr_str;
         registered = false;
         this->sockfd = sockfd;
+    }
+
+    std::string get_identifier() {
+        return nickname + "!" + username + "@" + hostname;
+    }
+};
+
+class User_List {
+    public:
+    std::vector<User> users;
+    void add_user(std::string ip_addr_str, int sockfd, std::string hostname) {
+        User usr;
+        usr.nickname = "";
+        usr.username = "";
+        usr.hostname = hostname;
+        usr.ip_addr_str = ip_addr_str;
+        usr.sockfd = sockfd;
+
+        users.push_back(usr);
+    }
+    int update_nick(std::string ip_addr_str, std::string new_nick) {
+        for (std::vector<User>::iterator iter = users.begin(); iter < users.end(); iter++) {
+            if (iter->ip_addr_str == ip_addr_str) {
+                iter->nickname = new_nick;
+                return 0;
+            }
+        }
+        return 1;
+    }
+    int update_user(std::string ip_addr_str, std::string new_user) {
+        for (std::vector<User>::iterator iter = users.begin(); iter < users.end(); iter++) {
+            if (iter->ip_addr_str == ip_addr_str) {
+                iter->username = new_user;
+                return 0;
+            }
+        }
+        return 1;
+    }
+    int update_real(std::string ip_addr_str, std::string new_real) {
+        for (std::vector<User>::iterator iter = users.begin(); iter < users.end(); iter++) {
+            if (iter->ip_addr_str == ip_addr_str) {
+                iter->realname = new_real;
+                return 0;
+            }
+        }
+        return 1;
+    }
+
+    bool nick_exists(std::string nick) {
+        for (std::vector<User>::iterator iter = users.begin(); iter < users.end(); iter++) {
+            if (iter->nickname == nick) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    int get_user_idx_via_nick(std::string nickname) {
+        int i = 0;
+        for (std::vector<User>::iterator iter = users.begin(); iter < users.end(); iter++) {
+            if (iter->nickname == nickname) {
+                // std::cerr << "cur_nick: \"" << iter->nickname << "\"" << std::endl; 
+                return i;
+            }
+            ++i;
+        }
+
+        return -1;
+    }
+    int get_user_idx_via_ip(std::string ip_addr_str) {
+        int i = 0;
+        for (std::vector<User>::iterator iter = users.begin(); iter < users.end(); iter++) {
+            if (iter->ip_addr_str == ip_addr_str) {
+                return i;
+            }
+            ++i;
+        }
+
+        return -1;
+    }
+    void broadcast(std::string msg) {
+        for (std::vector<User>::iterator iter = users.begin(); iter < users.end(); iter++) {
+            int sockfd = iter->sockfd;
+            if (iter->registered) {
+                if (send(sockfd, msg.c_str(), msg.size()+1, 0) <= 0) {
+                    std::cerr << "Unable to send message to " << iter->nickname << std::endl;
+                }
+                usleep(100000);
+            }
+        }
+    }
+    void remove_user(std::string ip_addr_str) {
+        int i = 0;
+        for (std::vector<User>::iterator iter = users.begin(); iter < users.end(); iter++) {
+            if (iter->ip_addr_str == ip_addr_str) {
+                users.erase(users.begin() + i);
+                break;
+            }
+            ++i;
+        }
+    }
+    bool is_registered(std::string ip_addr_str) {
+        int i = 0;
+        for (std::vector<User>::iterator iter = users.begin(); iter < users.end(); iter++) {
+            if (iter->ip_addr_str == ip_addr_str &&  iter->registered) {
+                return true;
+            }
+        }
+        return false;
     }
 };
 
 class Channel {
     public:
     std::string name;
+    std::string topic;
     std::vector<std::string> user_nicks;
     bool is_in_channel(std::string nick) {
         for (int i = 0; i < user_nicks.size(); ++i) {
@@ -166,6 +283,20 @@ class Channel {
             user_nicks.erase(user_nicks.begin() + user_idx);
         }
     }
+    void send_channel_msg(std::string msg, User_List users) {
+        for (int i = 0; i < user_nicks.size(); ++i) {
+            int user_idx = users.get_user_idx_via_nick(user_nicks[i]);
+            User user;
+            if (user_idx != -1) {
+                user = users.users[i];
+                std::cerr << "Sending message " << msg << std::endl;
+                if (send(user.sockfd, msg.c_str(), msg.size()+1, 0) <= 0) {
+                    std::cerr << "Unable to send message to user " << user_nicks[i] << std::endl; 
+                }
+                usleep(100000);
+            }
+        }
+    }
 };
 
 typedef struct {
@@ -182,8 +313,18 @@ class Channel_List {
     void add_channel(std::string channel_name) {
         Channel channel;
         channel.name = channel_name;
+        channel.topic = "No topic is set";
         channels.push_back(channel);
     }
+    int get_channel_idx(std::string channel_name) {
+        for (int i = 0; i < channels.size(); ++i) {
+            if (channels[i].name == channel_name) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
     bool channel_exists(std::string channel_name) {
         for (int i = 0; i < channels.size(); ++i) {
             if (channels[i].name == channel_name) {
@@ -218,99 +359,7 @@ class Channel_List {
     
 };
 
-class User_List {
-    public:
-    std::vector<User> users;
-    void add_user(std::string ip_addr_str, int sockfd) {
-        User usr;
-        usr.nickname = "";
-        usr.username = "";
-        usr.ip_addr_str = ip_addr_str;
-        usr.sockfd = sockfd;
 
-        users.push_back(usr);
-    }
-    int update_nick(std::string ip_addr_str, std::string new_nick) {
-        for (std::vector<User>::iterator iter = users.begin(); iter < users.end(); iter++) {
-            if (iter->ip_addr_str == ip_addr_str) {
-                iter->nickname = new_nick;
-                return 0;
-            }
-        }
-        return 1;
-    }
-    int update_user(std::string ip_addr_str, std::string new_user) {
-        for (std::vector<User>::iterator iter = users.begin(); iter < users.end(); iter++) {
-            if (iter->ip_addr_str == ip_addr_str) {
-                iter->username = new_user;
-                return 0;
-            }
-        }
-        return 1;
-    }
-    int remove_entry(std::string ip_addr_str);
-    int update_real(std::string ip_addr_str, std::string new_real) {
-        for (std::vector<User>::iterator iter = users.begin(); iter < users.end(); iter++) {
-            if (iter->ip_addr_str == ip_addr_str) {
-                iter->realname = new_real;
-                return 0;
-            }
-        }
-        return 1;
-    }
-
-    bool nick_exists(std::string nick) {
-        for (std::vector<User>::iterator iter = users.begin(); iter < users.end(); iter++) {
-            if (iter->nickname == nick) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    int get_user_idx_via_nick(std::string nickname) {
-        int i = 0;
-        for (std::vector<User>::iterator iter = users.begin(); iter < users.end(); iter++) {
-            if (iter->nickname == nickname) {
-                std::cerr << "cur_nick: \"" << iter->nickname << "\"" << std::endl; 
-                return i;
-            }
-            ++i;
-        }
-
-        return -1;
-    }
-    int get_user_idx_via_ip(std::string ip_addr_str) {
-        int i = 0;
-        for (std::vector<User>::iterator iter = users.begin(); iter < users.end(); iter++) {
-            if (iter->ip_addr_str == ip_addr_str) {
-                return i;
-            }
-            ++i;
-        }
-
-        return -1;
-    }
-    void broadcast(std::string msg) {
-        for (std::vector<User>::iterator iter = users.begin(); iter < users.end(); iter++) {
-            int sockfd = iter->sockfd;
-            if (iter->registered) {
-                if (send(sockfd, msg.c_str(), msg.size()+1, 0) <= 0) {
-                    std::cerr << "Unable to send message to " << iter->nickname << std::endl;
-                }
-            }
-        }
-    }
-    void remove_user(std::string ip_addr_str) {
-        int i = 0;
-        for (std::vector<User>::iterator iter = users.begin(); iter < users.end(); iter++) {
-            if (iter->ip_addr_str == ip_addr_str) {
-                users.erase(users.begin() + i);
-            }
-            ++i;
-        }
-    }
-};
 
 int configure_client(std::string filename, std::string& SERVER_IP, std::string& SERVER_PORT) { 
     std::string line;
@@ -327,7 +376,7 @@ int configure_client(std::string filename, std::string& SERVER_IP, std::string& 
 
         var_name = line.substr(0, (line.find("=")));
         var_val = line.substr( (line.find("=") + 1), std::string::npos);
-        std::cout << var_name << std::endl << var_val << std::endl;
+        std::cout << var_name << ": " << var_val << std::endl;
 
         if (var_name == "SERVER_IP")
             SERVER_IP = var_val;
@@ -359,7 +408,7 @@ int configure_server(std::string filename, std::string& NICK, std::string& PASS,
         
         var_name = line.substr(0, (line.find("=")));
         var_val = line.substr( (line.find("=") + 1), std::string::npos);
-        // std::cout << "var_name: " << var_name << "\nvar_val: " << var_val << std::endl;
+        std::cout << var_name << ": " << var_val << std::endl;
 
         if (var_name == "NICK")
             NICK = var_val;
@@ -473,6 +522,27 @@ bool is_valid_realname(std::string realname) {
         if (!isalpha(c) && !isdigit(c) && c != '\\' && c != '-' && c != '_' && c != '`' && c != '{' && c != '}' && c != '[' && c != ']' && c != '|' && c != ' ') {
             //character is invalid
             std::cerr << "\nInvalidating character: \"" << c << "\"" << std::endl;
+            return false;
+        }
+    }
+
+    return true;
+}
+bool is_valid_channame(std::string channame) {
+    if (channame.size() > 50 || channame.size() <= 0) {
+        return false;
+    }
+
+    if (channame[0] != '#' && channame[0] != '&' && channame[0] != '+' && channame[0] != '!') {
+        return false;
+    }
+
+    for (int i = 0; i < channame.size(); i++) {
+        char c = channame[i];
+
+        if (c == ' ' || c == 7 || c == ',') {
+            //character is invalid
+            // std::cerr << "\nInvalidating character: \"" << c << "\"" << std::endl;
             return false;
         }
     }

@@ -63,15 +63,20 @@ int main(int argc, char* argv[]) {
 
 void* receiver_func(void* socket) {
     int sockfd = * (int*) socket;
+    char rcv_msg_buff[MSGBUFSIZE] = {0};
 
     while (1) {
-        char rcv_msg_buff[MSGBUFSIZE] = {0};
-
-        if (recv(sockfd, rcv_msg_buff, sizeof(rcv_msg_buff), 0) <= 0) {
-            std::cerr << "Unable to receive message from server or connection closed" << std::endl;
+        memset(rcv_msg_buff, 0, MSGBUFSIZE);
+        int retval = recv(sockfd, rcv_msg_buff, sizeof(rcv_msg_buff), 0);
+        if (retval < 0) {
+            std::cerr << "Unable to receive message from server" << std::endl;
             break;
-        } else { 
-            printf("Message from server: %s\n", rcv_msg_buff);
+        } else if (retval == 0) {
+            std::cout << "Connection to server closed..." << std::endl;
+            break;
+        } else {
+            printf("\033[0;31m%s\033[0m\n", rcv_msg_buff);
+            // rewind(stdin);
         }
     }
 
